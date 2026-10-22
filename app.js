@@ -1,11 +1,11 @@
-// My Brain · app.js · Stage 2 · Capture
+// My Brain · app.js · Stage 3 · Understand
 // config.js must load first: it provides SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY.
 
 const client = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 
 // A second client with no session, used only by Lock check to act as a stranger.
 const stranger = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: "my-brain-lock-check" },
+  auth: { persistSession: false, autoRefreshToken: false, storageKey: "lock-check" },
 });
 
 const MAX_THOUGHT_CHARS = 20000;
@@ -16,17 +16,26 @@ function setStatus(message) {
   $("status").textContent = message;
 }
 
+function shortDate(value) {
+  return new Date(value).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
+}
+
 // ── Views follow sign-in state ─────────────────────────────────────────
 let currentUserId = null;
 client.auth.onAuthStateChange((_event, session) => {
   const userId = session?.user?.id ?? null;
   $("signin-view").hidden = Boolean(userId);
   $("brain-view").hidden = !userId;
-  if (userId && userId !== currentUserId) setTimeout(loadRecent, 0);
+  if (userId && userId !== currentUserId) {
+    setTimeout(loadRecent, 0);
+    setTimeout(catchUp, 0);
+  }
   if (!userId) {
     $("recent").replaceChildren();
     setStatus("");
     $("lock-result").textContent = "";
+    $("understanding").textContent = "";
+    clearSearch();
   }
   currentUserId = userId;
 });
@@ -53,13 +62,15 @@ $("signout-button").addEventListener("click", async () => {
 });
 
 // ── Tabs ───────────────────────────────────────────────────────────────
-const TABS = ["write", "link", "video", "pdf"];
+const TABS = ["write", "link", "video", "pdf", "search"];
 function selectTab(name) {
   for (const tab of TABS) {
     const selected = tab === name;
     $(`tab-${tab}`).setAttribute("aria-selected", String(selected));
     $(`panel-${tab}`).hidden = !selected;
   }
+  // While Search is open, Recent is hidden.
+  $("recent-section").hidden = name === "search";
 }
 for (const tab of TABS) {
   $(`tab-${tab}`).addEventListener("click", () => selectTab(tab));
@@ -101,6 +112,65 @@ async function callFunction(name, body) {
   } catch {
     return { ok: false, error: "We couldn't reach your server function. Check your connection and try again." };
   }
+}
+
+// ── Understanding: keep the brain up to date in the background ─────────
+// One catch-up at a time. A save during a catch-up makes it go around once more.
+const PAUSED = "Understanding paused. It will try again after your next save.";
+let catchUpRunning = false;
+let catchUpWanted = false;
+
+function setUnderstanding(message) {
+  $("understanding").textContent = message;
+}
+
+async function catchUp() {
+  if (!currentUserId) return;
+  catchUpWanted = true;
+  if (catchUpRunning) return;
+  catchUpRunning = true;
+  const userId = currentUserId;
+  if (!$("understanding").textContent.startsWith("Understanding your brain…")) {
+    setUnderstanding("Understanding your brain…");
+  }
+  try {
+    while (catchUpWanted) {
+      catchUpWanted = false;
+      let previous = Infinity;
+      while (true) {
+        if (currentUserId !== userId) return;
+        const result = await callFunction("understand", { action: "catch-up" });
+        if (currentUserId !== userId) return;
+        if (!result.ok) {
+          catchUpWanted = false;
+          setUnderstanding(PAUSED);
+          return;
+        }
+        const remaining = Number(result.remaining) || 0;
+        if (remaining <= 0) break;
+        // Nothing new done and nothing fewer left: stop rather than ask forever.
+        if (!result.fingerprints && remaining >= previous) {
+          catchUpWanted = false;
+          setUnderstanding(PAUSED);
+          return;
+        }
+        previous = remaining;
+        setUnderstanding(`Understanding your brain… ${remaining} to go`);
+      }
+    }
+    setUnderstanding("Up to date");
+  } finally {
+    catchUpRunning = false;
+    // Someone else signed in while this one was running: start theirs.
+    if (currentUserId && currentUserId !== userId) setTimeout(catchUp, 0);
+  }
+}
+
+// Every successful save or update: clear the panel, confirm, reload Recent, catch up.
+function afterSave(message) {
+  setStatus(message);
+  loadRecent();
+  catchUp();
 }
 
 // ── Write (typed or spoken) ────────────────────────────────────────────
@@ -204,8 +274,7 @@ $("note-save").addEventListener("click", async () => {
   if (!result.ok) return;
   $("note-text").value = "";
   usedVoice = false;
-  setStatus(wasVoice ? "Saved your voice note." : "Saved your note.");
-  loadRecent();
+  afterSave(wasVoice ? "Saved your voice note." : "Saved your note.");
 });
 
 // ── Link ───────────────────────────────────────────────────────────────
@@ -228,8 +297,7 @@ $("link-save").addEventListener("click", async () => {
     return;
   }
   $("link-url").value = "";
-  setStatus(`Saved: ${result.title}`);
-  loadRecent();
+  afterSave(`Saved: ${result.title}`);
 });
 
 // ── Video ──────────────────────────────────────────────────────────────
@@ -258,10 +326,9 @@ $("video-save").addEventListener("click", async () => {
   }
   const needsTranscript = result.has_transcript === false && Boolean(result.id);
   if (result.duplicate) {
-    setStatus(needsTranscript ? "Already in your brain. You can add its transcript below." : "Already in your brain");
+    setStatus("Already in your brain");
   } else {
-    setStatus(needsTranscript ? `Saved: ${result.title}. Add its transcript below.` : `Saved: ${result.title}`);
-    loadRecent();
+    afterSave(`Saved: ${result.title}`);
   }
   if (needsTranscript) {
     pendingVideo = result;
@@ -307,8 +374,7 @@ $("transcript-save").addEventListener("click", async () => {
   $("transcript-save").disabled = false;
   hideTranscriptBox();
   $("video-url").value = "";
-  setStatus(`Transcript added: ${video.title}`);
-  loadRecent();
+  afterSave(`Transcript added: ${video.title}`);
 });
 
 // ── PDF (read in the browser; the file is never uploaded) ──────────────
@@ -384,9 +450,36 @@ $("pdf-save").addEventListener("click", async () => {
   }
   $("pdf-file").value = "";
   resetPdf();
-  setStatus(`Saved: ${fileName}`);
-  loadRecent();
+  afterSave(`Saved: ${fileName}`);
 });
+
+// ── Cards (shared by Recent and Search) ────────────────────────────────
+function metaRow(source, createdAt) {
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  const tag = document.createElement("span");
+  tag.className = "tag";
+  tag.textContent = SOURCE_LABELS[source] || source || "Note";
+  const when = document.createElement("span");
+  when.className = "muted";
+  when.textContent = shortDate(createdAt);
+  meta.append(tag, when);
+  return meta;
+}
+
+function paragraph(className, text) {
+  const p = document.createElement("p");
+  p.className = className;
+  p.textContent = text;
+  return p;
+}
+
+function messageItem(text, className) {
+  const item = document.createElement("li");
+  if (className) item.className = className;
+  item.textContent = text;
+  return item;
+}
 
 // ── Recent ─────────────────────────────────────────────────────────────
 async function loadRecent() {
@@ -398,47 +491,113 @@ async function loadRecent() {
     .limit(20);
   list.replaceChildren();
   if (error) {
-    const item = document.createElement("li");
-    item.textContent = `Couldn't load your recent thoughts: ${error.message}`;
-    list.append(item);
+    list.append(messageItem(`Couldn't load your recent thoughts: ${error.message}`));
     return;
   }
   if (!data || data.length === 0) {
-    const item = document.createElement("li");
-    item.className = "muted";
-    item.textContent = "Nothing saved yet.";
-    list.append(item);
+    list.append(messageItem("Nothing saved yet.", "muted"));
     return;
   }
   for (const thought of data) {
     const item = document.createElement("li");
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    const tag = document.createElement("span");
-    tag.className = "tag";
-    tag.textContent = SOURCE_LABELS[thought.source] || thought.source || "Note";
-    const when = document.createElement("span");
-    when.className = "muted";
-    when.textContent = new Date(thought.created_at).toLocaleString();
-    meta.append(tag, when);
-    const text = document.createElement("p");
-    text.className = "thought-text";
     const content = thought.content || "";
-    text.textContent = content.length > 300 ? `${content.slice(0, 300)}…` : content;
-    item.append(meta, text);
+    item.append(
+      metaRow(thought.source, thought.created_at),
+      paragraph("thought-text", content.length > 300 ? `${content.slice(0, 300)}…` : content),
+    );
     list.append(item);
   }
 }
 
-// ── Lock check: can a stranger with no session read either table? ──────
+// ── Search ─────────────────────────────────────────────────────────────
+let searchTimer = null;
+let latestSearch = 0;
+
+function clearSearch() {
+  clearTimeout(searchTimer);
+  latestSearch++;
+  $("search-text").value = "";
+  $("search-state").textContent = "";
+  $("search-note").hidden = true;
+  $("search-results").replaceChildren();
+}
+
+function showResults(results) {
+  const list = $("search-results");
+  list.replaceChildren();
+  for (const result of results) {
+    const item = document.createElement("li");
+    item.append(metaRow(result.source, result.created_at), paragraph("first-line", result.first_line || ""));
+    if (result.passage) {
+      item.append(paragraph("found-label", "Found inside:"), paragraph("thought-text", result.passage));
+    } else {
+      item.append(paragraph("thought-text", result.preview || ""));
+    }
+    if (Array.isArray(result.related) && result.related.length > 0) {
+      item.append(paragraph("found-label", "Related:"));
+      const related = document.createElement("ul");
+      related.className = "related";
+      for (const other of result.related) {
+        const line = document.createElement("li");
+        line.textContent = other.first_line || "";
+        related.append(line);
+      }
+      item.append(related);
+    }
+    list.append(item);
+  }
+}
+
+async function runSearch() {
+  clearTimeout(searchTimer);
+  const query = $("search-text").value.trim();
+  const thisSearch = ++latestSearch;
+  if (!query) {
+    $("search-state").textContent = "";
+    $("search-note").hidden = true;
+    $("search-results").replaceChildren();
+    return;
+  }
+  $("search-state").textContent = "Searching…";
+  const result = await callFunction("understand", { action: "search", query });
+  if (thisSearch !== latestSearch) return; // a newer search has started
+  if (!result.ok) {
+    $("search-state").textContent = result.error;
+    return;
+  }
+  const results = Array.isArray(result.results) ? result.results : [];
+  $("search-note").hidden = result.mode !== "words only";
+  $("search-state").textContent = results.length === 0 ? "Nothing found yet." : "";
+  showResults(results);
+}
+
+$("search-text").addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(runSearch, 400);
+});
+
+$("search-text").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    runSearch();
+  }
+});
+
+// ── Lock check: can a stranger with no session read any of the four tables? ──
 $("lock-check").addEventListener("click", async () => {
   const result = $("lock-result");
+  result.classList.remove("error");
   result.textContent = "Checking…";
   const checks = await Promise.all(
-    ["thoughts", "thought_sources"].map((table) => stranger.from(table).select("*").limit(1)),
+    ["thoughts", "thought_sources", "thought_passages", "thought_links"].map((table) =>
+      stranger.from(table).select("*").limit(1),
+    ),
   );
   const locked = checks.every(({ data, error }) => error || !data || data.length === 0);
-  result.textContent = locked
-    ? "Locked"
-    : "Not locked: someone without an account can read your data. Stop and re-run your database scripts.";
+  if (locked) {
+    result.textContent = "Locked: someone with only the public key sees nothing.";
+  } else {
+    result.textContent = "Not locked. Stop and tell your coach.";
+    result.classList.add("error");
+  }
 });

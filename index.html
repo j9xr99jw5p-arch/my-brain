@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -12,123 +12,120 @@
     :root {
       color-scheme: light dark;
       --bg: #fafaf8;
-      --fg: #1c1c1a;
-      --muted: #66665f;
+      --text: #121211;
+      --quiet: #5c5c57;
       --card: #ffffff;
-      --border: #d6d6cf;
-      --accent: #2f5fd0;
-      --accent-fg: #ffffff;
-      --danger: #c0352b;
-      --ok: #1f7a3a;
+      --line: #dcdcd5;
+      --chip: #ebebe5;
+      --accent: #2f5bd3;
+      --accent-text: #ffffff;
+      --danger: #b3261e;
     }
     @media (prefers-color-scheme: dark) {
       :root {
         --bg: #121211;
-        --fg: #ececea;
-        --muted: #a3a39c;
-        --card: #1c1c1a;
-        --border: #3a3a36;
-        --accent: #7aa2ff;
-        --accent-fg: #121211;
-        --danger: #ff7a6e;
-        --ok: #6fd28e;
+        --text: #f2f2ee;
+        --quiet: #a6a69f;
+        --card: #1d1d1b;
+        --line: #34342f;
+        --chip: #2b2b28;
+        --accent: #8fb0ff;
+        --accent-text: #121211;
+        --danger: #ff8a80;
       }
     }
     * { box-sizing: border-box; }
-    html { -webkit-text-size-adjust: 100%; }
+    [hidden] { display: none !important; }
     body {
       margin: 0;
       background: var(--bg);
-      color: var(--fg);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      font-size: 17px;
-      line-height: 1.5;
+      color: var(--text);
+      font: 17px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
     main { max-width: 640px; margin: 0 auto; padding: 16px; }
-    [hidden] { display: none !important; }
-    h1 { font-size: 1.5rem; margin: 0; }
-    h2 { font-size: 1.15rem; margin: 0; }
-    p { overflow-wrap: anywhere; }
+    h1 { font-size: 1.6rem; margin: 0; }
+    h2 { font-size: 1.2rem; margin: 0; }
     label { display: block; font-weight: 600; margin: 14px 0 6px; }
-    input[type="email"], input[type="password"], input[type="text"],
-    input[type="url"], input[type="search"], textarea {
+    input, textarea, button { font: inherit; }
+    input[type="email"], input[type="password"], input[type="url"],
+    input[type="text"], input[type="search"], textarea {
       width: 100%;
-      font: inherit;
-      font-size: 17px;
       padding: 12px;
-      border: 1px solid var(--border);
+      border: 1px solid var(--line);
       border-radius: 10px;
       background: var(--card);
-      color: var(--fg);
+      color: var(--text);
     }
-    input[type="file"] { font: inherit; font-size: 16px; max-width: 100%; }
     textarea { min-height: 140px; resize: vertical; }
     button {
-      font: inherit;
-      font-size: 17px;
-      min-height: 48px;
-      padding: 10px 18px;
+      min-height: 44px;
+      padding: 10px 16px;
       border-radius: 10px;
-      border: 1px solid var(--border);
+      border: 1px solid var(--line);
       background: var(--card);
-      color: var(--fg);
+      color: var(--text);
       cursor: pointer;
     }
-    button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
+    button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
     button:disabled { opacity: 0.55; cursor: default; }
-    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
-    .header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-    .quiet { color: var(--muted); font-size: 16px; margin: 6px 0 0; }
+    .quiet { color: var(--quiet); margin: 4px 0; }
     .error { color: var(--danger); }
-    .ok { color: var(--ok); }
-    .tabs {
+    .bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .scroller {
       display: flex;
+      flex-wrap: nowrap;
       gap: 8px;
       overflow-x: auto;
-      flex-wrap: nowrap;
-      margin: 16px 0 8px;
-      padding-bottom: 4px;
+      padding-bottom: 6px;
+      margin-top: 16px;
       -webkit-overflow-scrolling: touch;
     }
-    .tabs button { flex: 0 0 auto; }
-    .tabs button[aria-selected="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
-    .status { min-height: 1.5em; margin: 14px 0; }
-    section { margin-top: 28px; }
-    .section-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-    ul.list { list-style: none; padding: 0; margin: 12px 0 0; }
-    ul.list li {
+    .scroller button { flex: 0 0 auto; white-space: nowrap; }
+    [role="tab"][aria-selected="true"],
+    .filters button[aria-pressed="true"] { background: var(--text); color: var(--bg); border-color: var(--text); }
+    .block { margin-top: 32px; }
+    .list { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+    .card {
       background: var(--card);
-      border: 1px solid var(--border);
+      border: 1px solid var(--line);
       border-radius: 12px;
       padding: 12px 14px;
-      margin-bottom: 10px;
       overflow-wrap: anywhere;
     }
-    .meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 15px; color: var(--muted); margin-bottom: 4px; }
-    .tag { display: inline-block; font-size: 14px; font-weight: 600; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--border); color: var(--fg); }
-    .first-line { font-weight: 600; }
-    .sub { font-size: 16px; margin-top: 8px; }
-    .sub-label { font-weight: 600; color: var(--muted); }
-    .key-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
-    progress { width: 100%; height: 16px; margin-top: 12px; }
-    .keybox { margin-top: 16px; padding: 14px; border: 2px solid var(--accent); border-radius: 12px; background: var(--card); }
-    .keybox textarea {
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; color: var(--quiet); }
+    .tag { font-weight: 700; color: var(--text); }
+    .gist { font-style: italic; color: var(--quiet); margin: 6px 0 0; }
+    .text {
+      display: block;
+      width: 100%;
+      text-align: left;
+      white-space: pre-wrap;
+      border: none;
+      background: none;
+      padding: 0;
+      margin-top: 6px;
       min-height: 0;
-      font-family: ui-monospace, Menlo, Consolas, monospace;
-      font-size: 15px;
-      word-break: break-all;
-      resize: none;
     }
+    .found { margin: 8px 0 0; }
+    .found strong { display: block; }
+    .topics { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .topic { min-height: 34px; padding: 4px 12px; border: none; border-radius: 999px; background: var(--chip); }
+    .wrap { overflow-wrap: anywhere; word-break: break-all; }
+    progress { width: 100%; height: 14px; margin-top: 12px; }
+    .switch { display: flex; align-items: center; gap: 10px; font-weight: 400; }
+    .switch input { width: 24px; height: 24px; margin: 0; }
+    #key-box { margin-top: 14px; }
   </style>
 </head>
 <body>
   <main>
     <!-- Sign in -->
-    <div id="signin-view" hidden>
+    <section id="signin-view" hidden>
       <h1>My Brain</h1>
       <form id="signin-form">
         <label for="email">Email</label>
-        <input id="email" type="email" autocomplete="email" required>
+        <input id="email" type="email" autocomplete="username" required>
         <label for="password">Password</label>
         <input id="password" type="password" autocomplete="current-password" required>
         <div class="row">
@@ -136,116 +133,145 @@
         </div>
         <p id="signin-error" class="error" role="alert"></p>
       </form>
-    </div>
+    </section>
 
     <!-- Brain -->
-    <div id="brain-view" hidden>
-      <div class="header">
+    <section id="brain-view" hidden>
+      <header class="bar">
         <h1>My Brain</h1>
-        <button id="signout-button" type="button">Sign out</button>
-      </div>
-      <p id="understanding" class="quiet" aria-live="polite"></p>
+        <button id="signout" type="button">Sign out</button>
+      </header>
+      <p id="understanding-line" class="quiet"></p>
+      <p id="labels-line" class="quiet"></p>
 
-      <div class="tabs" role="tablist">
-        <button type="button" role="tab" id="tab-write" data-panel="panel-write" aria-controls="panel-write" aria-selected="true">Write</button>
-        <button type="button" role="tab" id="tab-link" data-panel="panel-link" aria-controls="panel-link" aria-selected="false">Link</button>
-        <button type="button" role="tab" id="tab-video" data-panel="panel-video" aria-controls="panel-video" aria-selected="false">Video</button>
-        <button type="button" role="tab" id="tab-pdf" data-panel="panel-pdf" aria-controls="panel-pdf" aria-selected="false">PDF</button>
-        <button type="button" role="tab" id="tab-search" data-panel="panel-search" aria-controls="panel-search" aria-selected="false">Search</button>
+      <div class="scroller" role="tablist" aria-label="Ways to add or find">
+        <button id="tab-write" type="button" role="tab" aria-selected="true" aria-controls="panel-write" data-panel="panel-write">Write</button>
+        <button id="tab-link" type="button" role="tab" aria-selected="false" aria-controls="panel-link" data-panel="panel-link">Link</button>
+        <button id="tab-video" type="button" role="tab" aria-selected="false" aria-controls="panel-video" data-panel="panel-video">Video</button>
+        <button id="tab-pdf" type="button" role="tab" aria-selected="false" aria-controls="panel-pdf" data-panel="panel-pdf">PDF</button>
+        <button id="tab-search" type="button" role="tab" aria-selected="false" aria-controls="panel-search" data-panel="panel-search">Search</button>
       </div>
 
-      <div id="panel-write" class="panel" role="tabpanel" aria-labelledby="tab-write">
-        <label for="note-text">What's on your mind?</label>
-        <textarea id="note-text"></textarea>
+      <section id="panel-write" role="tabpanel" aria-labelledby="tab-write">
+        <label for="note">What's on your mind?</label>
+        <textarea id="note"></textarea>
         <div class="row">
-          <button id="mic-button" type="button">Start listening</button>
-          <button id="note-save" class="primary" type="button">Save</button>
+          <button id="mic" type="button">Start voice</button>
+          <button id="save-note" class="primary" type="button">Save</button>
         </div>
-        <p id="mic-note" class="quiet" hidden></p>
-      </div>
-
-      <div id="panel-link" class="panel" role="tabpanel" aria-labelledby="tab-link" hidden>
-        <label for="link-url">Web address</label>
-        <input id="link-url" type="url" inputmode="url" autocomplete="off" placeholder="https://">
-        <div class="row">
-          <button id="link-save" class="primary" type="button">Save</button>
-        </div>
-      </div>
-
-      <div id="panel-video" class="panel" role="tabpanel" aria-labelledby="tab-video" hidden>
-        <label for="video-url">YouTube link</label>
-        <input id="video-url" type="url" inputmode="url" autocomplete="off" placeholder="https://www.youtube.com/watch?v=">
-        <div class="row">
-          <button id="video-save" class="primary" type="button">Save</button>
-        </div>
-        <div id="transcript-area" hidden>
-          <p id="transcript-hint" class="quiet"></p>
-          <label for="transcript-text">Paste the transcript</label>
-          <textarea id="transcript-text"></textarea>
-          <div class="row">
-            <button id="transcript-save" class="primary" type="button">Save</button>
-          </div>
-        </div>
-      </div>
-
-      <div id="panel-pdf" class="panel" role="tabpanel" aria-labelledby="tab-pdf" hidden>
-        <label for="pdf-file">Choose a PDF</label>
-        <input id="pdf-file" type="file" accept="application/pdf,.pdf">
-        <progress id="pdf-progress" value="0" max="1"></progress>
-        <label for="pdf-text">Text from the PDF</label>
-        <textarea id="pdf-text" readonly></textarea>
-        <div class="row">
-          <button id="pdf-save" class="primary" type="button" disabled>Save</button>
-        </div>
-      </div>
-
-      <div id="panel-search" class="panel" role="tabpanel" aria-labelledby="tab-search" hidden>
-        <label for="search-input">Search your brain</label>
-        <input id="search-input" type="search" autocomplete="off" enterkeyhint="search">
-        <p id="search-note" class="quiet" hidden>Matching words only right now.</p>
-        <p id="search-status" class="quiet"></p>
-        <ul id="search-results" class="list"></ul>
-      </div>
-
-      <p id="status" class="status" role="status" aria-live="polite"></p>
-
-      <section id="recent-section">
-        <div class="section-head">
-          <h2>Recent</h2>
-          <button id="refresh-button" type="button">Refresh</button>
-        </div>
-        <ul id="recent-list" class="list"></ul>
+        <p id="mic-help" class="quiet" hidden></p>
       </section>
 
-      <section id="connections-section">
+      <section id="panel-link" role="tabpanel" aria-labelledby="tab-link" hidden>
+        <label for="link-url">Web address</label>
+        <input id="link-url" type="url" inputmode="url" autocomplete="off">
+        <div class="row">
+          <button id="save-link" class="primary" type="button">Save</button>
+        </div>
+      </section>
+
+      <section id="panel-video" role="tabpanel" aria-labelledby="tab-video" hidden>
+        <label for="video-url">YouTube link</label>
+        <input id="video-url" type="url" inputmode="url" autocomplete="off">
+        <div class="row">
+          <button id="save-video" class="primary" type="button">Save</button>
+        </div>
+        <div id="transcript-box" hidden>
+          <label for="transcript">Paste the transcript</label>
+          <p class="quiet">On YouTube, click …more under the video, then Show transcript. Select the transcript, copy it and paste it here.</p>
+          <textarea id="transcript"></textarea>
+          <div class="row">
+            <button id="save-transcript" class="primary" type="button">Save</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="panel-pdf" role="tabpanel" aria-labelledby="tab-pdf" hidden>
+        <label for="pdf-file">Choose a PDF</label>
+        <input id="pdf-file" type="file" accept="application/pdf,.pdf">
+        <progress id="pdf-progress" value="0" max="1" hidden></progress>
+        <div id="pdf-review" hidden>
+          <label for="pdf-text">Text from the PDF</label>
+          <textarea id="pdf-text" readonly></textarea>
+          <div class="row">
+            <button id="save-pdf" class="primary" type="button">Save</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="panel-search" role="tabpanel" aria-labelledby="tab-search" hidden>
+        <label for="search-input">Search your brain</label>
+        <input id="search-input" type="search" autocomplete="off">
+        <p id="search-status" class="quiet"></p>
+        <p id="search-note" class="quiet" hidden>Matching words only right now.</p>
+        <ul id="search-results" class="list"></ul>
+      </section>
+
+      <p id="status" class="quiet" role="status" aria-live="polite"></p>
+
+      <div id="browse">
+        <div class="scroller filters" aria-label="Filter Recent">
+          <button type="button" data-filter="all" aria-pressed="true">All</button>
+          <button type="button" data-filter="do" aria-pressed="false">Do</button>
+          <button type="button" data-filter="idea" aria-pressed="false">Idea</button>
+          <button type="button" data-filter="know" aria-pressed="false">Know</button>
+          <button type="button" data-filter="ask" aria-pressed="false">Ask</button>
+          <button type="button" data-filter="keep" aria-pressed="false">Keep</button>
+          <button type="button" data-filter="life" aria-pressed="false">Life</button>
+          <button type="button" data-filter="look-backs" aria-pressed="false">Look-backs</button>
+          <button id="topic-filter" type="button" hidden></button>
+        </div>
+        <div class="row">
+          <button id="write-look-back" type="button" hidden>Write a look-back now</button>
+        </div>
+
+        <section class="block">
+          <div class="bar">
+            <h2>Recent</h2>
+            <button id="refresh" type="button">Refresh</button>
+          </div>
+          <ul id="recent" class="list"></ul>
+        </section>
+      </div>
+
+      <section class="block">
+        <h2>AI use</h2>
+        <p id="ai-use-line" class="quiet"></p>
+        <label class="switch" for="auto-reflect">
+          <input id="auto-reflect" type="checkbox" role="switch" checked>
+          Automatic labels and look-backs
+        </label>
+      </section>
+
+      <section class="block">
         <h2>Connections</h2>
-        <ul id="key-list" class="list"></ul>
+        <ul id="keys" class="list"></ul>
         <label for="key-name">Name for a new key</label>
         <input id="key-name" type="text" placeholder="Claude" maxlength="40" autocomplete="off">
         <div class="row">
-          <button id="make-key" class="primary" type="button">Make a key</button>
+          <button id="make-key" type="button">Make a key</button>
         </div>
-        <div id="key-box" class="keybox" hidden>
+        <div id="key-box" class="card" hidden>
           <p>Copy this address now. The app keeps only a scrambled copy of the key inside it, so it can't show it again.</p>
           <label for="key-address">Claude address:</label>
-          <textarea id="key-address" rows="3" readonly></textarea>
+          <input id="key-address" class="wrap" type="text" readonly>
           <div class="row">
             <button id="copy-key" type="button">Copy</button>
-            <button id="key-done" class="primary" type="button">Done</button>
+            <button id="key-done" type="button">Done</button>
           </div>
         </div>
       </section>
 
-      <section>
+      <section class="block">
         <button id="lock-check" type="button">Lock check</button>
-        <p id="lock-result"></p>
+        <p id="lock-result" class="quiet"></p>
       </section>
-    </div>
+    </section>
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-  <script src="config.js?v=4"></script>
-  <script src="app.js?v=4"></script>
+  <script src="config.js?v=5"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>

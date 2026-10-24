@@ -1,702 +1,860 @@
-// My Brain · app.js · Stage 4 (Reach)
-(() => {
-  'use strict';
+// My Brain · Stage 5 · app.js
+// Everything the page does. Text from thoughts, labels and keys always goes on
+// the page with textContent, never innerHTML.
 
-  const BASE_URL = SUPABASE_URL.replace(/\/+$/, '');
-  const client = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+const $ = (id) => document.getElementById(id);
 
-  // ── Helpers ─────────────────────────────────────────────────────────────
-  const $ = (id) => document.getElementById(id);
+const KINDS = ['do', 'idea', 'know', 'ask', 'keep', 'life'];
+const KIND_NAMES = { do: 'Do', idea: 'Idea', know: 'Know', ask: 'Ask', keep: 'Keep', life: 'Life' };
+const SOURCE_NAMES = { note: 'Note', app: 'Note', voice: 'Voice', link: 'Link', video: 'Video', pdf: 'PDF', claude: 'Claude' };
+const MAX_CONTENT = 20000;
+const PDF_WORKER = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-  const SOURCE_LABELS = {
-    note: 'Note', app: 'Note', voice: 'Voice', link: 'Link',
-    video: 'Video', pdf: 'PDF', claude: 'Claude'
+let signedInAs = null;
+let filter = 'all';
+let topic = null;
+let recentSeq = 0;
+let catchingUp = false;
+let catchUpAgain = false;
+let labeling = false;
+let labelAgain = false;
+let lookBackChecked = false;
+let searchSeq = 0;
+let searchTimer = null;
+let pendingVideo = null;
+let pdfDone = null;
+let lockClient = null;
+
+// ── Small helpers ───────────────────────────────────────────────────────
+function make(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined && text !== null) node.textContent = text;
+  return node;
+}
+
+function setStatus(text) {
+  $('status').textContent = text;
+}
+
+function shortDate(value) {
+  return new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function shortDateTime(value) {
+  return new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function firstLine(text) {
+  return String(text || '').trim().split('\n')[0];
+}
+
+function sourceName(source) {
+  return SOURCE_NAMES[source] || source || 'Note';
+}
+
+function waitingText(count) {
+  return `${count} ${count === 1 ? 'thought' : 'thoughts'} waiting for labels.`;
+}
+
+function base64url(bytes) {
+  let binary = '';
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function randomKey() {
+  return 'brain_' + base64url(crypto.getRandomValues(new Uint8Array(32)));
+}
+
+async function sha256Hex(text) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Calls one of your Supabase functions. Returns its reply, or
+// { ok: false, error } with the function's own error sentence.
+async function callFunction(name, body) {
+  try {
+    const { data, error } = await db.functions.invoke(name, { body });
+    if (error) {
+      let message = error.message || 'Something went wrong.';
+      try {
+        const details = await error.context.json();
+        if (details && details.error) message = details.error;
+      } catch (_) {
+        // keep the general message
+      }
+      return { ok: false, error: message };
+    }
+    if (data && data.ok === false) return { ok: false, error: data.error || 'Something went wrong.' };
+    return data || {};
+  } catch (err) {
+    return { ok: false, error: (err && err.message) || 'Something went wrong.' };
+  }
+}
+
+function autoOn() {
+  try {
+    return localStorage.getItem('auto-reflect') !== 'off';
+  } catch (_) {
+    return true;
+  }
+}
+
+// ── Views and signing in ────────────────────────────────────────────────
+function showView(user) {
+  $('signin-view').hidden = !!user;
+  $('brain-view').hidden = !user;
+  if (!user) {
+    signedInAs = null;
+    $('key-address').value = '';
+    $('key-box').hidden = true;
+    return;
+  }
+  if (user.id === signedInAs) return;
+  signedInAs = user.id;
+  lookBackChecked = false;
+  $('auto-reflect').checked = autoOn();
+  updateFilters();
+  loadRecent();
+  loadAiUse();
+  loadKeys();
+  catchUp();
+}
+
+$('signin-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = $('signin-button');
+  button.disabled = true;
+  $('signin-error').textContent = '';
+  const { error } = await db.auth.signInWithPassword({
+    email: $('email').value.trim(),
+    password: $('password').value,
+  });
+  button.disabled = false;
+  if (error) $('signin-error').textContent = error.message;
+  else $('password').value = '';
+});
+
+$('signout').addEventListener('click', () => db.auth.signOut());
+
+// ── Tabs ────────────────────────────────────────────────────────────────
+const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+
+function selectTab(id) {
+  for (const tab of tabs) {
+    const on = tab.id === id;
+    tab.setAttribute('aria-selected', String(on));
+    $(tab.dataset.panel).hidden = !on;
+  }
+  $('browse').hidden = id === 'tab-search';
+  if (id === 'tab-search') $('search-input').focus();
+}
+
+tabs.forEach((tab) => tab.addEventListener('click', () => selectTab(tab.id)));
+
+// ── Saving ──────────────────────────────────────────────────────────────
+async function saveThought(content, source, metadata) {
+  const row = { content, source };
+  if (metadata) row.metadata = metadata;
+  const { data, error } = await db.from('thoughts').insert(row).select('id').single();
+  if (error) {
+    setStatus(error.code === '23505' ? 'Already in your brain' : error.message);
+    return null;
+  }
+  return data.id;
+}
+
+function afterSave(message) {
+  setStatus(message);
+  loadRecent();
+  catchUp();
+}
+
+// ── Write and voice ─────────────────────────────────────────────────────
+const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognizer = null;
+let listening = false;
+let heardVoice = false;
+let textBeforeVoice = '';
+
+function showMicLabel() {
+  $('mic').textContent = listening ? 'Listening… tap to stop' : 'Start voice';
+}
+
+if (!Recognition) {
+  $('mic').disabled = true;
+  $('mic-help').textContent = "Voice isn't available in this browser. On a phone, use the microphone on your keyboard.";
+  $('mic-help').hidden = false;
+} else {
+  recognizer = new Recognition();
+  recognizer.continuous = true;
+  recognizer.interimResults = true;
+  recognizer.onresult = (event) => {
+    let heard = '';
+    for (let i = 0; i < event.results.length; i++) heard += event.results[i][0].transcript;
+    heard = heard.trim();
+    if (!heard) return;
+    heardVoice = true;
+    $('note').value = textBeforeVoice ? textBeforeVoice + ' ' + heard : heard;
   };
-  const sourceLabel = (source) => SOURCE_LABELS[source] || 'Note';
+  recognizer.onend = () => {
+    listening = false;
+    showMicLabel();
+  };
+  recognizer.onerror = () => {
+    listening = false;
+    showMicLabel();
+  };
+}
 
-  function shortDate(iso) {
-    return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+$('mic').addEventListener('click', () => {
+  if (!recognizer) return;
+  if (listening) {
+    recognizer.stop();
+    return;
   }
-  function shortDateTime(iso) {
-    return new Date(iso).toLocaleString(undefined, {
-      month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
-    });
+  textBeforeVoice = $('note').value.trim();
+  try {
+    recognizer.start();
+    listening = true;
+  } catch (_) {
+    listening = false;
   }
-  function firstLine(text) {
-    const line = String(text || '').split('\n').map((l) => l.trim()).find((l) => l !== '') || '';
-    return line.slice(0, 120);
+  showMicLabel();
+});
+
+$('save-note').addEventListener('click', async () => {
+  if (recognizer && listening) recognizer.abort();
+  const content = $('note').value.trim();
+  if (!content) return;
+  const button = $('save-note');
+  button.disabled = true;
+  const id = await saveThought(content, heardVoice ? 'voice' : 'note');
+  button.disabled = false;
+  if (id) {
+    $('note').value = '';
+    heardVoice = false;
+    textBeforeVoice = '';
+    afterSave('Saved.');
   }
-  function clip(text, max) {
-    const t = String(text || '');
-    return t.length > max ? t.slice(0, max) + '…' : t;
+});
+
+// ── Link ────────────────────────────────────────────────────────────────
+$('save-link').addEventListener('click', async () => {
+  const url = $('link-url').value.trim();
+  if (!url) return;
+  const button = $('save-link');
+  button.disabled = true;
+  setStatus('Reading the page…');
+  const reply = await callFunction('capture-link', { url });
+  button.disabled = false;
+  if (reply.ok === false) {
+    setStatus(reply.error);
+    return;
   }
-  function setStatus(text, isError) {
-    const el = $('status');
-    el.textContent = text || '';
-    el.className = 'status' + (isError ? ' error' : '');
+  $('link-url').value = '';
+  if (reply.duplicate) {
+    setStatus('Already in your brain');
+    return;
   }
-  async function functionError(error, fallback) {
-    try {
-      if (error && error.context && typeof error.context.json === 'function') {
-        const body = await error.context.json();
-        if (body && (body.error || body.message)) return body.error || body.message;
-      }
-    } catch (e) { /* fall through */ }
-    return fallback;
+  afterSave('Saved: ' + (reply.title || url));
+});
+
+// ── Video ───────────────────────────────────────────────────────────────
+$('save-video').addEventListener('click', async () => {
+  const url = $('video-url').value.trim();
+  if (!url) return;
+  const button = $('save-video');
+  button.disabled = true;
+  setStatus('Fetching the video…');
+  const reply = await callFunction('capture-video', { url });
+  button.disabled = false;
+  if (reply.ok === false) {
+    setStatus(reply.error);
+    return;
   }
-
-  // ── Views and sign-in ───────────────────────────────────────────────────
-  let currentUserId = null;
-
-  client.auth.onAuthStateChange((event, session) => {
-    const userId = session && session.user ? session.user.id : null;
-    $('signin-view').hidden = !!userId;
-    $('brain-view').hidden = !userId;
-    if (userId && userId !== currentUserId) {
-      currentUserId = userId;
-      setTimeout(onSignedIn, 0);
-    } else if (!userId && currentUserId) {
-      currentUserId = null;
-      onSignedOut();
-    }
-  });
-
-  $('signin-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const button = $('signin-button');
-    $('signin-error').textContent = '';
-    button.disabled = true;
-    const { error } = await client.auth.signInWithPassword({
-      email: $('email').value.trim(),
-      password: $('password').value
-    });
-    button.disabled = false;
-    if (error) {
-      $('signin-error').textContent = error.message;
-    } else {
-      $('password').value = '';
-    }
-  });
-
-  $('signout-button').addEventListener('click', () => {
-    client.auth.signOut();
-  });
-
-  function onSignedIn() {
-    loadRecent();
-    loadKeys();
-    catchUp();
-  }
-
-  function onSignedOut() {
-    $('recent-list').replaceChildren();
-    $('key-list').replaceChildren();
-    $('search-results').replaceChildren();
-    $('search-status').textContent = '';
-    $('search-note').hidden = true;
-    $('understanding').textContent = '';
-    $('lock-result').textContent = '';
-    $('key-address').value = '';
-    $('key-box').hidden = true;
-    setStatus('');
-  }
-
-  // ── Tabs ────────────────────────────────────────────────────────────────
-  const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
-  tabs.forEach((tab) => {
-    tab.addEventListener('click', () => {
-      tabs.forEach((t) => {
-        const selected = t === tab;
-        t.setAttribute('aria-selected', selected ? 'true' : 'false');
-        $(t.dataset.panel).hidden = !selected;
-      });
-      $('recent-section').hidden = tab.id === 'tab-search';
-      if (tab.id === 'tab-search') $('search-input').focus();
-    });
-  });
-
-  // ── Saving a thought ────────────────────────────────────────────────────
-  async function insertThought(row) {
-    const { data, error } = await client.from('thoughts').insert(row).select('id').single();
-    if (error) {
-      if (error.code === '23505') return { duplicate: true };
-      return { error };
-    }
-    return { id: data.id };
-  }
-
-  function afterSave(message) {
-    setStatus(message);
-    loadRecent();
-    catchUp();
-  }
-
-  // ── Write ───────────────────────────────────────────────────────────────
-  const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
-  let recognizer = null;
-  let listening = false;
-  let usedVoice = false;
-  let textBeforeListening = '';
-
-  function setMicLabel() {
-    $('mic-button').textContent = listening ? 'Listening… tap to stop' : 'Start listening';
-  }
-
-  if (!Speech) {
-    $('mic-button').disabled = true;
-    $('mic-note').textContent = "Voice isn't available in this browser. On a phone, use the microphone on your keyboard.";
-    $('mic-note').hidden = false;
-  }
-
-  function stopListening() {
-    if (recognizer && listening) recognizer.stop();
-  }
-
-  $('mic-button').addEventListener('click', () => {
-    if (!Speech) return;
-    if (listening) {
-      stopListening();
-      return;
-    }
-    const box = $('note-text');
-    textBeforeListening = box.value.trim() === '' ? '' : box.value.replace(/\s*$/, ' ');
-    recognizer = new Speech();
-    recognizer.continuous = true;
-    recognizer.interimResults = true;
-    recognizer.onresult = (event) => {
-      let finished = '';
-      let inProgress = '';
-      for (let i = 0; i < event.results.length; i++) {
-        const piece = event.results[i][0].transcript;
-        if (event.results[i].isFinal) finished += piece;
-        else inProgress += piece;
-      }
-      if ((finished + inProgress).trim() !== '') usedVoice = true;
-      box.value = textBeforeListening + finished + inProgress;
-    };
-    recognizer.onend = () => {
-      listening = false;
-      setMicLabel();
-    };
-    recognizer.onerror = () => {
-      listening = false;
-      setMicLabel();
-    };
-    try {
-      recognizer.start();
-      listening = true;
-      setMicLabel();
-    } catch (e) {
-      listening = false;
-      setMicLabel();
-    }
-  });
-
-  $('note-save').addEventListener('click', async () => {
-    stopListening();
-    const text = $('note-text').value.trim();
-    if (text === '') {
-      setStatus('Write something first.', true);
-      return;
-    }
-    const button = $('note-save');
-    button.disabled = true;
-    const result = await insertThought({ content: text, source: usedVoice ? 'voice' : 'note' });
-    button.disabled = false;
-    if (result.error) {
-      setStatus(result.error.message, true);
-      return;
-    }
-    $('note-text').value = '';
-    usedVoice = false;
-    afterSave(result.duplicate ? 'Already in your brain' : 'Saved to your brain.');
-  });
-
-  // ── Link ────────────────────────────────────────────────────────────────
-  $('link-save').addEventListener('click', async () => {
-    const url = $('link-url').value.trim();
-    if (url === '') {
-      setStatus('Paste a web address first.', true);
-      return;
-    }
-    const button = $('link-save');
-    button.disabled = true;
-    setStatus('Reading the page…');
-    const { data, error } = await client.functions.invoke('capture-link', { body: { url } });
-    button.disabled = false;
-    if (error) {
-      setStatus(await functionError(error, "That page couldn't be saved."), true);
-      return;
-    }
-    $('link-url').value = '';
-    afterSave(data && data.duplicate ? 'Already in your brain' : 'Saved: ' + ((data && data.title) || url));
-  });
-
-  // ── Video ───────────────────────────────────────────────────────────────
-  let pendingVideo = null;
-
-  $('video-save').addEventListener('click', async () => {
-    const url = $('video-url').value.trim();
-    if (url === '') {
-      setStatus('Paste a YouTube link first.', true);
-      return;
-    }
-    const button = $('video-save');
-    button.disabled = true;
-    setStatus('Fetching the video…');
-    const { data, error } = await client.functions.invoke('capture-video', { body: { url } });
-    button.disabled = false;
-    if (error) {
-      setStatus(await functionError(error, "That video couldn't be saved."), true);
-      return;
-    }
-    $('video-url').value = '';
-    afterSave(data.duplicate ? 'Already in your brain' : 'Saved: ' + (data.title || url));
-    if (data.has_transcript === false) {
-      pendingVideo = {
-        id: data.id,
-        title: data.title || '',
-        link: data.url || data.link || url,
-        video_id: data.video_id,
-        channel: data.channel
-      };
-      $('transcript-hint').textContent =
-        'On YouTube, click …more under the video, then Show transcript. Select the transcript, copy it and paste it here.';
-      $('transcript-text').value = '';
-      $('transcript-area').hidden = false;
-    } else {
-      pendingVideo = null;
-      $('transcript-area').hidden = true;
-    }
-  });
-
-  $('transcript-save').addEventListener('click', async () => {
-    if (!pendingVideo) return;
-    const text = $('transcript-text').value.trim();
-    if (text === '') {
-      setStatus('Paste the transcript first.', true);
-      return;
-    }
-    const button = $('transcript-save');
-    button.disabled = true;
-    const content = pendingVideo.title + '\n' + pendingVideo.link + '\n\n' + text.slice(0, 20000);
-    const metadata = {
-      video_id: pendingVideo.video_id,
-      title: pendingVideo.title,
-      channel: pendingVideo.channel,
-      has_transcript: true
-    };
-    const { error } = await client.from('thoughts').update({ content, metadata }).eq('id', pendingVideo.id);
-    if (error) {
-      button.disabled = false;
-      setStatus(error.code === '23505' ? 'Already in your brain' : error.message, error.code !== '23505');
-      return;
-    }
-    const sourceResult = await client.from('thought_sources').insert({
-      thought_id: pendingVideo.id,
-      kind: 'video_transcript',
-      full_text: text
-    });
-    button.disabled = false;
-    if (sourceResult.error && sourceResult.error.code !== '23505') {
-      setStatus(sourceResult.error.message, true);
-      return;
-    }
+  $('video-url').value = '';
+  if (reply.duplicate) setStatus('Already in your brain');
+  else afterSave('Saved: ' + (reply.title || url));
+  if (reply.has_transcript === false) {
+    pendingVideo = reply;
+    $('transcript').value = '';
+    $('transcript-box').hidden = false;
+  } else {
     pendingVideo = null;
-    $('transcript-text').value = '';
-    $('transcript-area').hidden = true;
-    afterSave('Transcript saved.');
-  });
-
-  // ── PDF ─────────────────────────────────────────────────────────────────
-  if (window.pdfjsLib) {
-    pdfjsLib.GlobalWorkerOptions.workerSrc =
-      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    $('transcript-box').hidden = true;
   }
-  let pdfData = null;
+});
 
-  $('pdf-file').addEventListener('change', async () => {
-    const file = $('pdf-file').files[0];
-    pdfData = null;
-    $('pdf-save').disabled = true;
-    $('pdf-text').value = '';
-    $('pdf-progress').value = 0;
-    if (!file) return;
-    if (!window.pdfjsLib) {
-      setStatus("The PDF reader didn't load. Reload the page and try again.", true);
-      return;
-    }
-    setStatus('Reading the PDF…');
-    try {
-      const doc = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
-      const pages = [];
-      for (let i = 1; i <= doc.numPages; i++) {
-        const page = await doc.getPage(i);
-        const content = await page.getTextContent();
-        let pageText = '';
-        content.items.forEach((item) => {
-          pageText += item.str + (item.hasEOL ? '\n' : ' ');
-        });
-        pages.push(pageText.trim());
-        $('pdf-progress').value = i / doc.numPages;
-      }
-      const text = pages.join('\n\n').trim();
-      $('pdf-text').value = text;
-      if (text === '') {
-        setStatus('No text found in this PDF. It may be a scanned picture.', true);
-        return;
-      }
-      pdfData = { name: file.name, pages: doc.numPages, text };
-      $('pdf-save').disabled = false;
-      setStatus('Check the text, then press Save.');
-    } catch (e) {
-      console.error('PDF read failed');
-      setStatus("That PDF couldn't be read.", true);
-    }
-  });
+$('save-transcript').addEventListener('click', async () => {
+  const pasted = $('transcript').value.trim();
+  if (!pasted || !pendingVideo) return;
+  const video = pendingVideo;
+  const link = video.url || video.link || '';
+  const button = $('save-transcript');
+  button.disabled = true;
+  const { error } = await db
+    .from('thoughts')
+    .update({
+      content: `${video.title}\n${link}\n\n${pasted.slice(0, MAX_CONTENT)}`,
+      metadata: { video_id: video.video_id, title: video.title, channel: video.channel, has_transcript: true },
+    })
+    .eq('id', video.id);
+  if (error) {
+    button.disabled = false;
+    setStatus(error.code === '23505' ? 'Already in your brain' : error.message);
+    return;
+  }
+  const { error: sourceError } = await db
+    .from('thought_sources')
+    .insert({ thought_id: video.id, kind: 'video_transcript', content: pasted });
+  button.disabled = false;
+  pendingVideo = null;
+  $('transcript').value = '';
+  $('transcript-box').hidden = true;
+  afterSave('Transcript saved.');
+  if (sourceError) setStatus("Transcript saved, but the full copy wasn't: " + sourceError.message);
+});
 
-  $('pdf-save').addEventListener('click', async () => {
-    if (!pdfData) return;
-    const button = $('pdf-save');
-    button.disabled = true;
-    const result = await insertThought({
-      content: 'PDF: ' + pdfData.name + '\n' + pdfData.text.slice(0, 20000),
-      source: 'pdf',
-      metadata: { file_name: pdfData.name, pages: pdfData.pages }
-    });
-    if (result.error) {
-      button.disabled = false;
-      setStatus(result.error.message, true);
-      return;
-    }
-    if (result.id && pdfData.text.length > 20000) {
-      const sourceResult = await client.from('thought_sources').insert({
-        thought_id: result.id,
-        kind: 'pdf',
-        full_text: pdfData.text
-      });
-      if (sourceResult.error && sourceResult.error.code !== '23505') {
-        button.disabled = false;
-        setStatus(sourceResult.error.message, true);
-        return;
-      }
-    }
-    const name = pdfData.name;
-    pdfData = null;
-    $('pdf-file').value = '';
-    $('pdf-text').value = '';
-    $('pdf-progress').value = 0;
-    afterSave(result.duplicate ? 'Already in your brain' : 'Saved: ' + name);
-  });
+// ── PDF ─────────────────────────────────────────────────────────────────
+if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDF_WORKER;
 
-  // ── Recent ──────────────────────────────────────────────────────────────
-  async function loadRecent() {
-    const { data, error } = await client
-      .from('thoughts')
-      .select('id, content, source, created_at')
-      .order('created_at', { ascending: false })
-      .limit(20);
-    if (error) {
-      setStatus(error.message, true);
-      return;
+$('pdf-file').addEventListener('change', async () => {
+  const file = $('pdf-file').files[0];
+  pdfDone = null;
+  $('pdf-review').hidden = true;
+  if (!file) return;
+  const progress = $('pdf-progress');
+  progress.max = 1;
+  progress.value = 0;
+  progress.hidden = false;
+  setStatus('Reading the PDF…');
+  try {
+    const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+    progress.max = pdf.numPages;
+    const pages = [];
+    for (let n = 1; n <= pdf.numPages; n++) {
+      const page = await pdf.getPage(n);
+      const textContent = await page.getTextContent();
+      pages.push(textContent.items.map((item) => item.str + (item.hasEOL ? '\n' : ' ')).join('').trim());
+      progress.value = n;
     }
-    const list = $('recent-list');
-    list.replaceChildren();
-    data.forEach((t) => {
-      const li = document.createElement('li');
-      const meta = document.createElement('div');
-      meta.className = 'meta';
-      const tag = document.createElement('span');
-      tag.className = 'tag';
-      tag.textContent = sourceLabel(t.source);
-      const when = document.createElement('span');
-      when.textContent = shortDateTime(t.created_at);
-      meta.append(tag, when);
-      const body = document.createElement('div');
-      body.textContent = clip(t.content, 300);
-      li.append(meta, body);
-      list.append(li);
+    const text = pages.join('\n\n').trim();
+    pdfDone = { fileName: file.name, pages: pdf.numPages, text };
+    $('pdf-text').value = text;
+    $('pdf-review').hidden = false;
+    setStatus(text ? 'Check the text, then press Save.' : 'No text found in this PDF.');
+  } catch (_) {
+    setStatus("Couldn't read that PDF.");
+  }
+});
+
+$('save-pdf').addEventListener('click', async () => {
+  if (!pdfDone || !pdfDone.text) return;
+  const { fileName, pages, text } = pdfDone;
+  const button = $('save-pdf');
+  button.disabled = true;
+  const id = await saveThought(`PDF: ${fileName}\n${text.slice(0, MAX_CONTENT)}`, 'pdf', { file_name: fileName, pages });
+  let sourceError = null;
+  if (id && text.length > MAX_CONTENT) {
+    const { error } = await db.from('thought_sources').insert({ thought_id: id, kind: 'pdf', content: text });
+    sourceError = error;
+  }
+  button.disabled = false;
+  if (!id) return;
+  pdfDone = null;
+  $('pdf-file').value = '';
+  $('pdf-text').value = '';
+  $('pdf-review').hidden = true;
+  $('pdf-progress').hidden = true;
+  afterSave('Saved: ' + fileName);
+  if (sourceError) setStatus("Saved, but the full text wasn't: " + sourceError.message);
+});
+
+// ── Recent and filters ──────────────────────────────────────────────────
+function cardLabel(row) {
+  if (row.metadata && row.metadata.kind === 'look-back') return 'Look-back';
+  if (KIND_NAMES[row.category]) return KIND_NAMES[row.category];
+  return sourceName(row.source);
+}
+
+function topicButtons(tags, onPick) {
+  const box = make('div', 'topics');
+  for (const t of tags || []) {
+    const button = make('button', 'topic', t);
+    button.type = 'button';
+    button.addEventListener('click', () => onPick(t));
+    box.append(button);
+  }
+  return box;
+}
+
+function thoughtCard(row) {
+  const card = make('li', 'card');
+  const meta = make('div', 'meta');
+  meta.append(make('span', 'tag', cardLabel(row)), make('span', null, shortDateTime(row.created_at)));
+  card.append(meta);
+  if (row.summary) card.append(make('p', 'gist', row.summary));
+  const full = row.content || '';
+  const short = full.length > 300 ? full.slice(0, 300) + '…' : full;
+  const text = make('button', 'text', short);
+  text.type = 'button';
+  if (full.length > 300) {
+    text.setAttribute('aria-expanded', 'false');
+    text.addEventListener('click', () => {
+      const open = text.getAttribute('aria-expanded') === 'true';
+      text.textContent = open ? short : full;
+      text.setAttribute('aria-expanded', String(!open));
     });
   }
+  card.append(text);
+  if (row.tags && row.tags.length) card.append(topicButtons(row.tags, chooseTopic));
+  return card;
+}
 
-  $('refresh-button').addEventListener('click', () => {
+async function loadRecent() {
+  const seq = ++recentSeq;
+  let query = db
+    .from('thoughts')
+    .select('id, content, source, created_at, category, tags, summary, metadata')
+    .order('created_at', { ascending: false })
+    .limit(20);
+  if (KINDS.includes(filter)) query = query.eq('category', filter);
+  if (filter === 'look-backs') query = query.eq('metadata->>kind', 'look-back');
+  if (topic) query = query.contains('tags', [topic]);
+  const { data, error } = await query;
+  if (seq !== recentSeq) return;
+  const list = $('recent');
+  list.replaceChildren();
+  if (error) {
+    list.append(make('li', 'quiet', error.message));
+    return;
+  }
+  if (!data.length) {
+    list.append(make('li', 'quiet', 'Nothing here yet.'));
+    return;
+  }
+  for (const row of data) list.append(thoughtCard(row));
+}
+
+function updateFilters() {
+  document.querySelectorAll('[data-filter]').forEach((button) => {
+    button.setAttribute('aria-pressed', String(button.dataset.filter === filter));
+  });
+  $('topic-filter').hidden = !topic;
+  $('topic-filter').textContent = topic ? 'Topic: ' + topic : '';
+  $('write-look-back').hidden = filter !== 'look-backs';
+}
+
+function chooseTopic(t) {
+  topic = t;
+  updateFilters();
+  loadRecent();
+}
+
+document.querySelectorAll('[data-filter]').forEach((button) => {
+  button.addEventListener('click', () => {
+    filter = button.dataset.filter;
+    updateFilters();
     loadRecent();
-    catchUp();
   });
+});
 
-  // ── Understanding ───────────────────────────────────────────────────────
-  let catchingUp = false;
-  let goAgain = false;
+$('topic-filter').addEventListener('click', () => {
+  topic = null;
+  updateFilters();
+  loadRecent();
+});
 
-  async function catchUp() {
-    if (catchingUp) {
-      goAgain = true;
-      return;
-    }
-    catchingUp = true;
-    const line = $('understanding');
-    try {
-      do {
-        goAgain = false;
-        while (currentUserId) {
-          const { data, error } = await client.functions.invoke('understand', { body: { action: 'catch-up' } });
-          if (error) {
-            line.textContent = 'Understanding paused. It will try again after your next save.';
-            goAgain = false;
-            return;
-          }
-          const remaining = Number(data && data.remaining) || 0;
-          if (remaining > 0) {
-            line.textContent = 'Understanding your brain… ' + remaining + ' to go';
-          } else {
-            line.textContent = 'Up to date';
-            break;
-          }
-        }
-      } while (goAgain && currentUserId);
-    } finally {
-      catchingUp = false;
-    }
+$('refresh').addEventListener('click', () => {
+  loadRecent();
+  catchUp();
+});
+
+// ── Understanding ───────────────────────────────────────────────────────
+async function catchUp() {
+  if (catchingUp) {
+    catchUpAgain = true;
+    return;
   }
-
-  // ── Search ──────────────────────────────────────────────────────────────
-  let searchTimer = null;
-  let searchNumber = 0;
-
-  async function runSearch() {
-    clearTimeout(searchTimer);
-    const query = $('search-input').value.trim();
-    const mine = ++searchNumber;
-    const results = $('search-results');
-    if (query === '') {
-      results.replaceChildren();
-      $('search-status').textContent = '';
-      $('search-note').hidden = true;
-      return;
-    }
-    $('search-status').textContent = 'Searching…';
-    const { data, error } = await client.functions.invoke('understand', { body: { action: 'search', query } });
-    if (mine !== searchNumber) return;
-    if (error) {
-      $('search-status').textContent = await functionError(error, "Search didn't work. Try again in a minute.");
-      return;
-    }
-    const found = (data && data.results) || [];
-    $('search-note').hidden = !(data && data.mode === 'words only');
-    results.replaceChildren();
-    if (found.length === 0) {
-      $('search-status').textContent = 'Nothing found yet.';
-      return;
-    }
-    $('search-status').textContent = '';
-    found.forEach((r) => {
-      const li = document.createElement('li');
-      const meta = document.createElement('div');
-      meta.className = 'meta';
-      const tag = document.createElement('span');
-      tag.className = 'tag';
-      tag.textContent = sourceLabel(r.source);
-      const when = document.createElement('span');
-      when.textContent = r.created_at ? shortDate(r.created_at) : '';
-      meta.append(tag, when);
-      const title = document.createElement('div');
-      title.className = 'first-line';
-      title.textContent = r.first_line || firstLine(r.content);
-      li.append(meta, title);
-
-      const detail = document.createElement('div');
-      detail.className = 'sub';
-      if (r.passage) {
-        const label = document.createElement('span');
-        label.className = 'sub-label';
-        label.textContent = 'Found inside: ';
-        const text = document.createElement('span');
-        text.textContent = r.passage;
-        detail.append(label, text);
-        li.append(detail);
-      } else {
-        const preview = r.preview || clip(r.content, 300);
-        if (preview) {
-          detail.textContent = preview;
-          li.append(detail);
+  catchingUp = true;
+  const line = $('understanding-line');
+  let failed = false;
+  try {
+    do {
+      catchUpAgain = false;
+      line.textContent = 'Understanding your brain…';
+      for (;;) {
+        const reply = await callFunction('understand', { action: 'catch-up' });
+        if (reply.ok === false) {
+          failed = true;
+          break;
         }
+        const remaining = Number(reply.remaining || 0);
+        if (remaining <= 0) break;
+        line.textContent = `Understanding your brain… ${remaining} to go`;
       }
-
-      if (Array.isArray(r.related) && r.related.length > 0) {
-        const rel = document.createElement('div');
-        rel.className = 'sub';
-        const label = document.createElement('span');
-        label.className = 'sub-label';
-        label.textContent = 'Related: ';
-        const text = document.createElement('span');
-        text.textContent = r.related.map((x) => x.first_line || firstLine(x.content)).join('; ');
-        rel.append(label, text);
-        li.append(rel);
-      }
-      results.append(li);
-    });
+    } while (catchUpAgain && !failed);
+  } finally {
+    catchingUp = false;
   }
+  if (failed) {
+    line.textContent = 'Understanding paused. It will try again after your next save.';
+    return;
+  }
+  line.textContent = 'Up to date';
+  startLabeling();
+}
 
-  $('search-input').addEventListener('input', () => {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(runSearch, 400);
-  });
-  $('search-input').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      runSearch();
-    }
-  });
+// ── Labeling ────────────────────────────────────────────────────────────
+async function showWaiting() {
+  const { count, error } = await db
+    .from('thoughts')
+    .select('id', { count: 'exact', head: true })
+    .is('processed_at', null);
+  if (!error) $('labels-line').textContent = waitingText(count || 0);
+}
 
-  // ── Connections ─────────────────────────────────────────────────────────
-  async function loadKeys() {
-    const { data, error } = await client
-      .from('connection_keys')
-      .select('id, label, created_at, last_used_at')
-      .order('created_at', { ascending: false });
-    if (error) {
-      setStatus(error.message, true);
-      return;
+async function startLabeling() {
+  if (!autoOn()) {
+    showWaiting();
+    return;
+  }
+  if (labeling) {
+    labelAgain = true;
+    return;
+  }
+  labeling = true;
+  const line = $('labels-line');
+  let failed = false;
+  try {
+    do {
+      labelAgain = false;
+      line.textContent = 'Labeling…';
+      for (;;) {
+        if (!autoOn()) break;
+        const reply = await callFunction('reflect', { action: 'label' });
+        if (reply.ok === false) {
+          failed = true;
+          line.textContent = 'Labels paused: ' + reply.error;
+          break;
+        }
+        const waiting = Number(reply.waiting || 0);
+        const labeled = Number(reply.labeled || 0);
+        loadRecent();
+        loadAiUse();
+        if (waiting <= 0) {
+          line.textContent = 'Every thought has labels.';
+          break;
+        }
+        if (labeled <= 0) {
+          line.textContent = waitingText(waiting);
+          break;
+        }
+        line.textContent = `Labeling… ${waiting} to go`;
+      }
+    } while (labelAgain && !failed && autoOn());
+  } finally {
+    labeling = false;
+  }
+  if (!autoOn()) {
+    showWaiting();
+    return;
+  }
+  if (!failed) maybeLookBack();
+}
+
+// ── Look-backs ──────────────────────────────────────────────────────────
+async function maybeLookBack() {
+  if (lookBackChecked || !autoOn()) return;
+  lookBackChecked = true;
+  const reply = await callFunction('reflect', { action: 'look-back', only_if_due: true });
+  if (reply.ok === false) return;
+  loadAiUse();
+  if (reply.written) {
+    setStatus('A new look-back is ready.');
+    loadRecent();
+  }
+}
+
+$('write-look-back').addEventListener('click', async () => {
+  const button = $('write-look-back');
+  button.disabled = true;
+  setStatus('Writing your look-back…');
+  const reply = await callFunction('reflect', { action: 'look-back', only_if_due: false });
+  button.disabled = false;
+  if (reply.ok === false) {
+    setStatus(reply.error);
+    return;
+  }
+  loadAiUse();
+  if (reply.written) {
+    setStatus('Your look-back is ready.');
+    loadRecent();
+  } else {
+    setStatus(reply.reason || '');
+  }
+});
+
+// ── AI use ──────────────────────────────────────────────────────────────
+async function loadAiUse() {
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const { data, error } = await db.from('ai_receipts').select('cost_usd').gte('created_at', monthStart.toISOString());
+  const line = $('ai-use-line');
+  if (error) {
+    line.textContent = error.message;
+    return;
+  }
+  const calls = data.length;
+  if (calls === 0) {
+    line.textContent = 'No AI calls this month.';
+    return;
+  }
+  const total = data.reduce((sum, row) => sum + Number(row.cost_usd || 0), 0);
+  const amount = total > 0 && total < 0.01 ? 'under $0.01' : 'about $' + total.toFixed(2);
+  line.textContent = `This month: ${calls} ${calls === 1 ? 'call' : 'calls'}, ${amount}`;
+}
+
+$('auto-reflect').addEventListener('change', () => {
+  try {
+    localStorage.setItem('auto-reflect', $('auto-reflect').checked ? 'on' : 'off');
+  } catch (_) {
+    // this browser can't remember the setting
+  }
+  startLabeling();
+});
+
+// ── Search ──────────────────────────────────────────────────────────────
+function searchCard(result) {
+  const node = make('li', 'card');
+  const meta = make('div', 'meta');
+  const tag = make('span', 'tag', sourceName(result.source));
+  const when = result.created_at || result.saved;
+  meta.append(tag, make('span', null, when ? shortDateTime(when) : ''));
+  node.append(meta);
+  const gistSlot = make('div');
+  node.append(gistSlot);
+  node.append(make('p', 'found', result.first_line || firstLine(result.content || result.preview)));
+  if (result.passage) {
+    const found = make('div', 'found');
+    found.append(make('strong', null, 'Found inside:'), make('span', null, result.passage));
+    node.append(found);
+  } else if (result.preview) {
+    node.append(make('p', 'quiet', result.preview));
+  }
+  const related = Array.isArray(result.related) ? result.related : [];
+  if (related.length) {
+    const box = make('div', 'found');
+    box.append(make('strong', null, 'Related:'));
+    const items = make('ul');
+    for (const r of related) {
+      const line = typeof r === 'string' ? r : r.first_line || firstLine(r.content || r.preview);
+      items.append(make('li', null, line));
     }
-    const list = $('key-list');
+    box.append(items);
+    node.append(box);
+  }
+  const topicSlot = make('div');
+  node.append(topicSlot);
+  return {
+    node,
+    addLabels(row) {
+      if (KIND_NAMES[row.category]) tag.textContent = KIND_NAMES[row.category];
+      if (row.summary) gistSlot.replaceChildren(make('p', 'gist', row.summary));
+      if (row.tags && row.tags.length) {
+        topicSlot.replaceChildren(topicButtons(row.tags, (t) => {
+          selectTab('tab-write');
+          chooseTopic(t);
+        }));
+      }
+    },
+  };
+}
+
+async function runSearch() {
+  const query = $('search-input').value.trim();
+  const seq = ++searchSeq;
+  const list = $('search-results');
+  const status = $('search-status');
+  if (!query) {
     list.replaceChildren();
-    if (data.length === 0) {
-      const li = document.createElement('li');
-      li.textContent = 'No keys yet.';
-      list.append(li);
+    status.textContent = '';
+    $('search-note').hidden = true;
+    return;
+  }
+  status.textContent = 'Searching…';
+  const reply = await callFunction('understand', { action: 'search', query });
+  if (seq !== searchSeq) return;
+  list.replaceChildren();
+  if (reply.ok === false) {
+    status.textContent = reply.error;
+    return;
+  }
+  const results = Array.isArray(reply.results) ? reply.results : [];
+  $('search-note').hidden = reply.mode !== 'words only';
+  if (!results.length) {
+    status.textContent = 'Nothing found yet.';
+    return;
+  }
+  status.textContent = '';
+  const cards = new Map();
+  for (const result of results) {
+    const card = searchCard(result);
+    cards.set(result.id, card);
+    list.append(card.node);
+  }
+  const { data } = await db
+    .from('thoughts')
+    .select('id, category, tags, summary')
+    .in('id', results.map((r) => r.id));
+  if (seq !== searchSeq || !data) return;
+  for (const row of data) {
+    const card = cards.get(row.id);
+    if (card) card.addLabels(row);
+  }
+}
+
+$('search-input').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(runSearch, 400);
+});
+
+$('search-input').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    clearTimeout(searchTimer);
+    runSearch();
+  }
+});
+
+// ── Connections ─────────────────────────────────────────────────────────
+function keyRow(key) {
+  const row = make('li', 'card');
+  row.append(make('strong', null, key.label));
+  const used = key.last_used_at ? 'last used ' + shortDateTime(key.last_used_at) : 'never used';
+  row.append(make('p', 'quiet', `made ${shortDate(key.created_at)} · ${used}`));
+  const button = make('button', null, 'Disconnect');
+  button.type = 'button';
+  let armed = false;
+  let timer = null;
+  button.addEventListener('click', async () => {
+    if (!armed) {
+      armed = true;
+      button.textContent = 'Tap again to disconnect';
+      timer = setTimeout(() => {
+        armed = false;
+        button.textContent = 'Disconnect';
+      }, 4000);
       return;
     }
-    data.forEach((k) => {
-      const li = document.createElement('li');
-      li.className = 'key-row';
-      const info = document.createElement('div');
-      const name = document.createElement('div');
-      name.className = 'first-line';
-      name.textContent = k.label;
-      const meta = document.createElement('div');
-      meta.className = 'meta';
-      meta.textContent = 'made ' + shortDate(k.created_at) + ' · ' +
-        (k.last_used_at ? 'last used ' + shortDateTime(k.last_used_at) : 'never used');
-      info.append(name, meta);
+    clearTimeout(timer);
+    button.disabled = true;
+    const { error } = await db.from('connection_keys').delete().eq('id', key.id);
+    if (error) setStatus(error.message);
+    loadKeys();
+  });
+  const actions = make('div', 'row');
+  actions.append(button);
+  row.append(actions);
+  return row;
+}
 
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.textContent = 'Disconnect';
-      let armed = false;
-      let timer = null;
-      button.addEventListener('click', async () => {
-        if (!armed) {
-          armed = true;
-          button.textContent = 'Tap again to disconnect';
-          timer = setTimeout(() => {
-            armed = false;
-            button.textContent = 'Disconnect';
-          }, 4000);
-          return;
-        }
-        clearTimeout(timer);
-        button.disabled = true;
-        const { error: delError } = await client.from('connection_keys').delete().eq('id', k.id);
-        if (delError) {
-          button.disabled = false;
-          armed = false;
-          button.textContent = 'Disconnect';
-          setStatus(delError.message, true);
-          return;
-        }
-        loadKeys();
-      });
-      li.append(info, button);
-      list.append(li);
+async function loadKeys() {
+  const { data, error } = await db
+    .from('connection_keys')
+    .select('id, label, created_at, last_used_at')
+    .order('created_at', { ascending: false });
+  const list = $('keys');
+  list.replaceChildren();
+  if (error) {
+    list.append(make('li', 'quiet', error.message));
+    return;
+  }
+  if (!data.length) {
+    list.append(make('li', 'quiet', 'No keys yet.'));
+    return;
+  }
+  for (const key of data) list.append(keyRow(key));
+}
+
+$('make-key').addEventListener('click', async () => {
+  const button = $('make-key');
+  const label = $('key-name').value.trim() || 'Claude';
+  button.disabled = true;
+  try {
+    const key = randomKey();
+    const keyHash = await sha256Hex(key);
+    const { error } = await db.from('connection_keys').insert({ label, key_hash: keyHash });
+    if (error) {
+      setStatus(error.message);
+      return;
+    }
+    $('key-name').value = '';
+    $('key-address').value = SUPABASE_URL + '/functions/v1/brain-connector/' + key;
+    $('key-box').hidden = false;
+    loadKeys();
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('copy-key').addEventListener('click', async () => {
+  const field = $('key-address');
+  const button = $('copy-key');
+  try {
+    await navigator.clipboard.writeText(field.value);
+    button.textContent = 'Copied';
+    setTimeout(() => {
+      button.textContent = 'Copy';
+    }, 2000);
+  } catch (_) {
+    field.focus();
+    field.select();
+  }
+});
+
+$('key-done').addEventListener('click', () => {
+  $('key-address').value = '';
+  $('key-box').hidden = true;
+});
+
+// ── Lock check ──────────────────────────────────────────────────────────
+$('lock-check').addEventListener('click', async () => {
+  const button = $('lock-check');
+  const result = $('lock-result');
+  button.disabled = true;
+  result.classList.remove('error');
+  result.textContent = 'Checking…';
+  if (!lockClient) {
+    lockClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false, storageKey: 'lock-check' },
     });
   }
-
-  function base64url(bytes) {
-    let binary = '';
-    bytes.forEach((b) => { binary += String.fromCharCode(b); });
-    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const tables = ['thoughts', 'thought_sources', 'thought_passages', 'thought_links', 'connection_keys', 'ai_receipts'];
+  let locked = true;
+  for (const table of tables) {
+    const { data, error } = await lockClient.from(table).select('*').limit(1);
+    if (!error && data && data.length > 0) locked = false;
   }
-
-  async function sha256Hex(text) {
-    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-    return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+  const door = await lockClient.rpc('door_count', { p_key: randomKey() });
+  if (!door.error) locked = false;
+  button.disabled = false;
+  if (locked) {
+    result.textContent = 'Locked: someone with only the public key sees nothing, and the door turns away a made-up key.';
+  } else {
+    result.textContent = 'Not locked. Stop and tell your coach.';
+    result.classList.add('error');
   }
+});
 
-  function randomKey() {
-    const bytes = new Uint8Array(32);
-    crypto.getRandomValues(bytes);
-    return 'brain_' + base64url(bytes);
-  }
-
-  $('make-key').addEventListener('click', async () => {
-    const button = $('make-key');
-    const label = $('key-name').value.trim() || 'Claude';
-    button.disabled = true;
-    try {
-      const key = randomKey();
-      const keyHash = await sha256Hex(key);
-      const { error } = await client.from('connection_keys').insert({ label, key_hash: keyHash });
-      if (error) {
-        setStatus(error.message, true);
-        return;
-      }
-      $('key-name').value = '';
-      $('key-address').value = BASE_URL + '/functions/v1/brain-connector/' + key;
-      $('key-box').hidden = false;
-      loadKeys();
-    } catch (e) {
-      setStatus("The key couldn't be made in this browser.", true);
-    } finally {
-      button.disabled = false;
-    }
-  });
-
-  $('copy-key').addEventListener('click', async () => {
-    const field = $('key-address');
-    const button = $('copy-key');
-    try {
-      await navigator.clipboard.writeText(field.value);
-      button.textContent = 'Copied';
-      setTimeout(() => { button.textContent = 'Copy'; }, 2000);
-    } catch (e) {
-      field.focus();
-      field.select();
-    }
-  });
-
-  $('key-done').addEventListener('click', () => {
-    $('key-address').value = '';
-    $('key-box').hidden = true;
-  });
-
-  // ── Lock check ──────────────────────────────────────────────────────────
-  let stranger = null;
-
-  $('lock-check').addEventListener('click', async () => {
-    const result = $('lock-result');
-    result.className = '';
-    result.textContent = 'Checking…';
-    if (!stranger) {
-      stranger = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-        auth: { persistSession: false, autoRefreshToken: false, storageKey: 'lock-check' }
-      });
-    }
-    const tables = ['thoughts', 'thought_sources', 'thought_passages', 'thought_links', 'connection_keys'];
-    let locked = true;
-    for (const table of tables) {
-      const { data, error } = await stranger.from(table).select('*').limit(1);
-      if (!error && Array.isArray(data) && data.length > 0) locked = false;
-    }
-    const madeUp = randomKey();
-    const door = await stranger.rpc('door_count', { p_key: madeUp });
-    if (!door.error) locked = false;
-
-    if (locked) {
-      result.className = 'ok';
-      result.textContent = 'Locked: someone with only the public key sees nothing, and the door turns away a made-up key.';
-    } else {
-      result.className = 'error';
-      result.textContent = 'Not locked. Stop and tell your coach.';
-    }
-  });
-})();
+// ── Start ───────────────────────────────────────────────────────────────
+showMicLabel();
+updateFilters();
+db.auth.onAuthStateChange((_event, session) => {
+  // Let Supabase finish its own work before the app makes more calls.
+  setTimeout(() => showView(session ? session.user : null), 0);
+});

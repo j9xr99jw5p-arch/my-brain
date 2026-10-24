@@ -1,194 +1,251 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>My Brain</title>
   <link rel="manifest" href="manifest.json">
-  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <meta name="theme-color" content="#121211">
   <meta name="apple-mobile-web-app-title" content="My Brain">
   <style>
     :root {
       color-scheme: light dark;
-      --bg: #f7f7f4;
-      --surface: #ffffff;
-      --text: #1b1b1a;
-      --muted: #5c5c57;
-      --border: #d4d4ce;
-      --accent: #2b55c8;
-      --accent-text: #ffffff;
-      --error: #b3261e;
+      --bg: #fafaf8;
+      --fg: #1c1c1a;
+      --muted: #66665f;
+      --card: #ffffff;
+      --border: #d6d6cf;
+      --accent: #2f5fd0;
+      --accent-fg: #ffffff;
+      --danger: #c0352b;
+      --ok: #1f7a3a;
     }
     @media (prefers-color-scheme: dark) {
       :root {
         --bg: #121211;
-        --surface: #1c1c1a;
-        --text: #f0f0eb;
-        --muted: #a8a8a1;
+        --fg: #ececea;
+        --muted: #a3a39c;
+        --card: #1c1c1a;
         --border: #3a3a36;
-        --accent: #8fabff;
-        --accent-text: #121211;
-        --error: #ff8a80;
+        --accent: #7aa2ff;
+        --accent-fg: #121211;
+        --danger: #ff7a6e;
+        --ok: #6fd28e;
       }
     }
     * { box-sizing: border-box; }
-    [hidden] { display: none !important; }
-    html { font-size: 16px; }
+    html { -webkit-text-size-adjust: 100%; }
     body {
       margin: 0;
       background: var(--bg);
-      color: var(--text);
+      color: var(--fg);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      font-size: 1rem;
+      font-size: 17px;
       line-height: 1.5;
     }
     main { max-width: 640px; margin: 0 auto; padding: 16px; }
+    [hidden] { display: none !important; }
     h1 { font-size: 1.5rem; margin: 0; }
-    h2 { font-size: 1.125rem; margin: 28px 0 10px; }
+    h2 { font-size: 1.15rem; margin: 0; }
+    p { overflow-wrap: anywhere; }
     label { display: block; font-weight: 600; margin: 14px 0 6px; }
-    input[type="email"], input[type="password"], input[type="url"], input[type="search"], textarea {
+    input[type="email"], input[type="password"], input[type="text"],
+    input[type="url"], input[type="search"], textarea {
       width: 100%;
       font: inherit;
-      font-size: 1rem;
+      font-size: 17px;
       padding: 12px;
       border: 1px solid var(--border);
       border-radius: 10px;
-      background: var(--surface);
-      color: var(--text);
+      background: var(--card);
+      color: var(--fg);
     }
-    input[type="file"] { font: inherit; font-size: 1rem; width: 100%; }
-    textarea { min-height: 150px; resize: vertical; }
+    input[type="file"] { font: inherit; font-size: 16px; max-width: 100%; }
+    textarea { min-height: 140px; resize: vertical; }
     button {
       font: inherit;
-      font-size: 1rem;
+      font-size: 17px;
       min-height: 48px;
       padding: 10px 18px;
       border-radius: 10px;
       border: 1px solid var(--border);
-      background: var(--surface);
-      color: var(--text);
+      background: var(--card);
+      color: var(--fg);
       cursor: pointer;
     }
-    button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
-    .row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
-    .error { color: var(--error); min-height: 1.5em; }
-    .muted { color: var(--muted); }
-    .bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
-    .understanding { margin: 0 0 14px; min-height: 1.5em; }
-    .tabs { display: flex; flex-wrap: nowrap; gap: 8px; overflow-x: auto; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
-    .tabs button { flex: 0 0 auto; min-width: 88px; }
-    .tabs button[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
-    .status { min-height: 1.5em; margin: 14px 0 0; }
-    progress { width: 100%; height: 18px; margin-top: 12px; }
-    .cards { list-style: none; margin: 0; padding: 0; }
-    .cards > li { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 10px; }
-    #search-results { margin-top: 12px; }
-    .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-    .tag { font-weight: 600; border: 1px solid var(--border); border-radius: 999px; padding: 0 10px; }
-    .first-line { margin: 6px 0 0; font-weight: 600; overflow-wrap: anywhere; }
-    .thought-text { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-    .found-label { margin: 10px 0 0; font-weight: 600; color: var(--muted); }
-    .related { margin: 4px 0 0; padding-left: 20px; }
-    .related li { overflow-wrap: anywhere; }
-    footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--border); }
+    button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
+    button:disabled { opacity: 0.55; cursor: default; }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+    .header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    .quiet { color: var(--muted); font-size: 16px; margin: 6px 0 0; }
+    .error { color: var(--danger); }
+    .ok { color: var(--ok); }
+    .tabs {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      flex-wrap: nowrap;
+      margin: 16px 0 8px;
+      padding-bottom: 4px;
+      -webkit-overflow-scrolling: touch;
+    }
+    .tabs button { flex: 0 0 auto; }
+    .tabs button[aria-selected="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
+    .status { min-height: 1.5em; margin: 14px 0; }
+    section { margin-top: 28px; }
+    .section-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    ul.list { list-style: none; padding: 0; margin: 12px 0 0; }
+    ul.list li {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+      overflow-wrap: anywhere;
+    }
+    .meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 15px; color: var(--muted); margin-bottom: 4px; }
+    .tag { display: inline-block; font-size: 14px; font-weight: 600; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--border); color: var(--fg); }
+    .first-line { font-weight: 600; }
+    .sub { font-size: 16px; margin-top: 8px; }
+    .sub-label { font-weight: 600; color: var(--muted); }
+    .key-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+    progress { width: 100%; height: 16px; margin-top: 12px; }
+    .keybox { margin-top: 16px; padding: 14px; border: 2px solid var(--accent); border-radius: 12px; background: var(--card); }
+    .keybox textarea {
+      min-height: 0;
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      font-size: 15px;
+      word-break: break-all;
+      resize: none;
+    }
   </style>
 </head>
 <body>
   <main>
     <!-- Sign in -->
-    <section id="signin-view" hidden>
+    <div id="signin-view" hidden>
       <h1>My Brain</h1>
       <form id="signin-form">
         <label for="email">Email</label>
         <input id="email" type="email" autocomplete="email" required>
         <label for="password">Password</label>
         <input id="password" type="password" autocomplete="current-password" required>
-        <div class="row"><button type="submit" id="signin-button" class="primary">Sign in</button></div>
+        <div class="row">
+          <button id="signin-button" class="primary" type="submit">Sign in</button>
+        </div>
         <p id="signin-error" class="error" role="alert"></p>
       </form>
-    </section>
+    </div>
 
     <!-- Brain -->
-    <section id="brain-view" hidden>
-      <header class="bar">
+    <div id="brain-view" hidden>
+      <div class="header">
         <h1>My Brain</h1>
-        <button type="button" id="signout-button">Sign out</button>
-      </header>
-      <p id="understanding" class="understanding muted" aria-live="polite"></p>
+        <button id="signout-button" type="button">Sign out</button>
+      </div>
+      <p id="understanding" class="quiet" aria-live="polite"></p>
 
-      <div class="tabs" role="tablist" aria-label="Capture and search">
-        <button type="button" role="tab" id="tab-write" aria-controls="panel-write" aria-selected="true">Write</button>
-        <button type="button" role="tab" id="tab-link" aria-controls="panel-link" aria-selected="false">Link</button>
-        <button type="button" role="tab" id="tab-video" aria-controls="panel-video" aria-selected="false">Video</button>
-        <button type="button" role="tab" id="tab-pdf" aria-controls="panel-pdf" aria-selected="false">PDF</button>
-        <button type="button" role="tab" id="tab-search" aria-controls="panel-search" aria-selected="false">Search</button>
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" id="tab-write" data-panel="panel-write" aria-controls="panel-write" aria-selected="true">Write</button>
+        <button type="button" role="tab" id="tab-link" data-panel="panel-link" aria-controls="panel-link" aria-selected="false">Link</button>
+        <button type="button" role="tab" id="tab-video" data-panel="panel-video" aria-controls="panel-video" aria-selected="false">Video</button>
+        <button type="button" role="tab" id="tab-pdf" data-panel="panel-pdf" aria-controls="panel-pdf" aria-selected="false">PDF</button>
+        <button type="button" role="tab" id="tab-search" data-panel="panel-search" aria-controls="panel-search" aria-selected="false">Search</button>
       </div>
 
-      <section id="panel-write" role="tabpanel" aria-labelledby="tab-write">
+      <div id="panel-write" class="panel" role="tabpanel" aria-labelledby="tab-write">
         <label for="note-text">What's on your mind?</label>
         <textarea id="note-text"></textarea>
         <div class="row">
-          <button type="button" id="mic-button" aria-pressed="false">🎙️ Speak</button>
-          <button type="button" id="note-save" class="primary">Save</button>
+          <button id="mic-button" type="button">Start listening</button>
+          <button id="note-save" class="primary" type="button">Save</button>
         </div>
-        <p id="mic-note" class="muted" hidden></p>
-      </section>
+        <p id="mic-note" class="quiet" hidden></p>
+      </div>
 
-      <section id="panel-link" role="tabpanel" aria-labelledby="tab-link" hidden>
+      <div id="panel-link" class="panel" role="tabpanel" aria-labelledby="tab-link" hidden>
         <label for="link-url">Web address</label>
         <input id="link-url" type="url" inputmode="url" autocomplete="off" placeholder="https://">
-        <div class="row"><button type="button" id="link-save" class="primary">Save</button></div>
-      </section>
+        <div class="row">
+          <button id="link-save" class="primary" type="button">Save</button>
+        </div>
+      </div>
 
-      <section id="panel-video" role="tabpanel" aria-labelledby="tab-video" hidden>
+      <div id="panel-video" class="panel" role="tabpanel" aria-labelledby="tab-video" hidden>
         <label for="video-url">YouTube link</label>
         <input id="video-url" type="url" inputmode="url" autocomplete="off" placeholder="https://www.youtube.com/watch?v=">
-        <div class="row"><button type="button" id="video-save" class="primary">Save</button></div>
-        <div id="transcript-box" hidden>
-          <label for="transcript-text">Paste the transcript</label>
-          <p class="muted">On YouTube, click …more under the video, then Show transcript. Select the transcript, copy it and paste it here.</p>
-          <textarea id="transcript-text"></textarea>
-          <div class="row"><button type="button" id="transcript-save" class="primary">Save</button></div>
+        <div class="row">
+          <button id="video-save" class="primary" type="button">Save</button>
         </div>
-      </section>
+        <div id="transcript-area" hidden>
+          <p id="transcript-hint" class="quiet"></p>
+          <label for="transcript-text">Paste the transcript</label>
+          <textarea id="transcript-text"></textarea>
+          <div class="row">
+            <button id="transcript-save" class="primary" type="button">Save</button>
+          </div>
+        </div>
+      </div>
 
-      <section id="panel-pdf" role="tabpanel" aria-labelledby="tab-pdf" hidden>
+      <div id="panel-pdf" class="panel" role="tabpanel" aria-labelledby="tab-pdf" hidden>
         <label for="pdf-file">Choose a PDF</label>
         <input id="pdf-file" type="file" accept="application/pdf,.pdf">
-        <progress id="pdf-progress" value="0" max="100" aria-label="Reading progress"></progress>
+        <progress id="pdf-progress" value="0" max="1"></progress>
         <label for="pdf-text">Text from the PDF</label>
         <textarea id="pdf-text" readonly></textarea>
-        <div class="row"><button type="button" id="pdf-save" class="primary" disabled>Save</button></div>
-      </section>
+        <div class="row">
+          <button id="pdf-save" class="primary" type="button" disabled>Save</button>
+        </div>
+      </div>
 
-      <section id="panel-search" role="tabpanel" aria-labelledby="tab-search" hidden>
-        <label for="search-text">Search your brain</label>
-        <input id="search-text" type="search" enterkeyhint="search" autocomplete="off">
-        <p id="search-state" class="status" aria-live="polite"></p>
-        <p id="search-note" class="muted" hidden>Matching words only right now.</p>
-        <ul id="search-results" class="cards"></ul>
-      </section>
+      <div id="panel-search" class="panel" role="tabpanel" aria-labelledby="tab-search" hidden>
+        <label for="search-input">Search your brain</label>
+        <input id="search-input" type="search" autocomplete="off" enterkeyhint="search">
+        <p id="search-note" class="quiet" hidden>Matching words only right now.</p>
+        <p id="search-status" class="quiet"></p>
+        <ul id="search-results" class="list"></ul>
+      </div>
 
       <p id="status" class="status" role="status" aria-live="polite"></p>
 
       <section id="recent-section">
-        <h2>Recent</h2>
-        <ul id="recent" class="cards"></ul>
+        <div class="section-head">
+          <h2>Recent</h2>
+          <button id="refresh-button" type="button">Refresh</button>
+        </div>
+        <ul id="recent-list" class="list"></ul>
       </section>
 
-      <footer>
-        <button type="button" id="lock-check">Lock check</button>
-        <p id="lock-result" aria-live="polite"></p>
-      </footer>
-    </section>
+      <section id="connections-section">
+        <h2>Connections</h2>
+        <ul id="key-list" class="list"></ul>
+        <label for="key-name">Name for a new key</label>
+        <input id="key-name" type="text" placeholder="Claude" maxlength="40" autocomplete="off">
+        <div class="row">
+          <button id="make-key" class="primary" type="button">Make a key</button>
+        </div>
+        <div id="key-box" class="keybox" hidden>
+          <p>Copy this address now. The app keeps only a scrambled copy of the key inside it, so it can't show it again.</p>
+          <label for="key-address">Claude address:</label>
+          <textarea id="key-address" rows="3" readonly></textarea>
+          <div class="row">
+            <button id="copy-key" type="button">Copy</button>
+            <button id="key-done" class="primary" type="button">Done</button>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <button id="lock-check" type="button">Lock check</button>
+        <p id="lock-result"></p>
+      </section>
+    </div>
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-  <script src="config.js?v=3"></script>
-  <script src="app.js?v=3"></script>
+  <script src="config.js?v=4"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>
